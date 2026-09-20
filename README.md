@@ -52,7 +52,7 @@ Pin a version if you prefer:
 
 ```jsonc
 {
-  "plugins": ["opencode-muse-code@0.1.1"]
+  "plugins": ["opencode-muse-code@0.1.2"]
 }
 ```
 
