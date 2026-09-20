@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import { Model, Plugin, Provider } from "@opencode-ai/plugin"
+import { Model, Plugin, Provider } from "@opencode/plugin"
 
 const PROVIDER_ID = "muse-code"
 const PROVIDER_NAME = "Muse Code Sub Plugin"

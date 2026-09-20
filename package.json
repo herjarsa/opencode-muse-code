@@ -29,7 +29,7 @@
     "muse-code",
     "meta"
   ],
-  "peerDependencies": {
-    "@opencode-ai/plugin": "*"
+  "dependencies": {
+    "@opencode/plugin": "^2.0.8"
   }
 }
