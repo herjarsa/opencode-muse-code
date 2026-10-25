@@ -235,7 +235,7 @@ export default Plugin.define({
 
     const timer = setInterval(() => {
       void refresh()
-        .then((ready) => (ready ? provider.reload() : undefined))
+        .then((ready) => (ready ? Promise.resolve() : undefined))
         .catch((error) => console.error("[muse-code] refresh failed", error))
     }, REFRESH_MS)
 
@@ -245,3 +245,4 @@ export default Plugin.define({
     }
   },
 })
+
