@@ -12,8 +12,9 @@ const API_ORIGIN = "https://api.meta.ai"
 const API_BASE = `${API_ORIGIN}/v1`
 const KEYCHAIN_SERVICE = "ai.meta.dev.credentials"
 const KEYCHAIN_ACCOUNT = "meta"
-const REFRESH_MS = 30 * 60 * 1_000
 const REQUEST_TIMEOUT_MS = 10_000
+// Setups replay on (nearly) every request, so never fetch twice within TTL.
+const REFRESH_TTL_MS = 5 * 60 * 1_000
 
 type Credential = { api_key?: string; access_token?: string }
 type CredentialFile = Credential & { providers?: { meta?: Credential } }
@@ -190,7 +191,7 @@ export default Plugin.define({
 
     // Mutable state the synchronous transform reads. It is refreshed before
     // every provider reload, so reads during a replay see current data.
-    const state: { apiKey?: string; accessToken?: string; catalog: readonly MuseModel[] } = { catalog: FALLBACK_CATALOG }
+    const state: { apiKey?: string; accessToken?: string; catalog: readonly MuseModel[]; refreshedAt?: number } = { catalog: FALLBACK_CATALOG }
 
     // Subscription flow: the OAuth access token is used directly as the
     // bearer (mintApiKey would fail or return a key without the builtin
@@ -205,10 +206,12 @@ export default Plugin.define({
       state.apiKey = undefined
       state.accessToken = accessToken
       state.catalog = usable
+      state.refreshedAt = Date.now()
       return true
     }
 
     const refresh = async (): Promise<boolean> => {
+      if (state.refreshedAt && Date.now() - state.refreshedAt < REFRESH_TTL_MS && state.catalog.length > 0) return true
       const credential = await readCredential(optionKey)
       const minted = credential?.api_key ?? (credential?.access_token && (await mintApiKey(credential.access_token)))
       if (minted) {
@@ -227,6 +230,7 @@ export default Plugin.define({
         return meta && !meta.is_hidden && meta.tool_call !== false && (meta.modalities?.output ?? ["text"]).includes("text")
       })
       if (usable?.length) state.catalog = usable
+      state.refreshedAt = Date.now()
       return true
     }
 
@@ -271,14 +275,9 @@ export default Plugin.define({
       })
     })
 
-    const timer = setInterval(() => {
-      void refresh()
-        .then((ready) => (ready ? Promise.resolve() : undefined))
-        .catch((error) => console.error("[muse-code] refresh failed", error))
-    }, REFRESH_MS)
-
+    // No refresh timer: setups already replay on every request, so a timer
+    // would only add pointless traffic. State refreshes via the TTL above.
     return () => {
-      clearInterval(timer)
       void registration.dispose()
     }
   },
