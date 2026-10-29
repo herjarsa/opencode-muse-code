@@ -1,18 +1,18 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-muse-code",
-  "version": "0.1.2",
+  "version": "0.2.0-fork.1",
   "description": "Use a Muse Code (Meta) subscription in OpenCode",
   "author": "Shane Walker",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/swalker326/opencode-muse-code.git"
+    "url": "git+https://github.com/herjarsa/opencode-muse-code.git"
   },
-  "homepage": "https://github.com/swalker326/opencode-muse-code#readme",
+  "homepage": "https://github.com/herjarsa/opencode-muse-code#readme",
   "bugs": {
-    "url": "https://github.com/swalker326/opencode-muse-code/issues"
+    "url": "https://github.com/herjarsa/opencode-muse-code/issues"
   },
   "exports": {
     ".": "./index.ts"
@@ -29,7 +29,9 @@
     "muse-code",
     "meta"
   ],
-  "dependencies": {
-    "@opencode/plugin": "^2.0.8"
+  "devDependencies": {
+    "@opencode/plugin": "^2.2.1",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
   }
 }

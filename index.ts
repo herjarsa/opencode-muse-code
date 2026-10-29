@@ -5,8 +5,8 @@ import path from "node:path"
 
 import { Model, Plugin, Provider } from "@opencode/plugin"
 
-const PROVIDER_ID = "muse-code"
-const PROVIDER_NAME = "Muse Code Sub Plugin"
+const PROVIDER_ID = "muse-code-sub"
+const PROVIDER_NAME = "Muse Code Subscription"
 const PROVIDER_PACKAGE = "@opencode/ai/providers/openai-compatible"
 const API_ORIGIN = "https://api.meta.ai"
 const API_BASE = `${API_ORIGIN}/v1`
@@ -16,6 +16,7 @@ const REFRESH_MS = 30 * 60 * 1_000
 const REQUEST_TIMEOUT_MS = 10_000
 
 type Credential = { api_key?: string; access_token?: string }
+type CredentialFile = Credential & { providers?: { meta?: Credential } }
 
 type MuseVariant = { reasoningEffort?: string }
 
@@ -108,15 +109,23 @@ async function readCredential(override: string | undefined): Promise<Credential 
       KEYCHAIN_ACCOUNT,
       "-w",
     ]).catch(() => undefined)
-    const parsed = parseJson<Credential>(raw)
-    if (parsed?.api_key || parsed?.access_token) return parsed
+    const parsed = parseJson<CredentialFile>(raw)
+    const credential = parsed?.providers?.meta ?? parsed
+    if (credential?.api_key || credential?.access_token) return credential
   }
 
   for (const file of ["auth.json", "secrets.json"]) {
     const filePath = path.join(os.homedir(), ".config", "muse", file)
-    const parsed = parseJson<Credential>(await readFile(filePath, "utf8").catch(() => undefined))
-    if (parsed?.api_key || parsed?.access_token) return parsed
+    const parsed = parseJson<CredentialFile>(await readFile(filePath, "utf8").catch(() => undefined))
+    const credential = parsed?.providers?.meta ?? parsed
+    if (credential?.api_key || credential?.access_token) return credential
   }
+
+  // Legacy cache written by opencode-muse-auth (plain { apiKey }).
+  const subCache = parseJson<{ apiKey?: string }>(
+    await readFile(path.join(os.homedir(), ".config", "opencode", "muse-code-sub.json"), "utf8").catch(() => undefined),
+  )
+  if (subCache?.apiKey?.trim()) return { api_key: subCache.apiKey.trim() }
 
   return undefined
 }
@@ -153,7 +162,7 @@ function toModelInfo(providerID: Provider.ID, model: MuseModel): Model.Info {
   const defaultEffort = meta.options?.reasoningEffort
   return {
     ...Model.Info.default(providerID, Model.ID.make(model.id)),
-    name: meta.name ?? model.id,
+    name: model.id,
     capabilities: {
       tools: meta.tool_call !== false,
       input: [...(meta.modalities?.input ?? ["text"])],
@@ -173,7 +182,7 @@ function toModelInfo(providerID: Provider.ID, model: MuseModel): Model.Info {
 }
 
 export default Plugin.define({
-  id: "muse-code",
+  id: "muse-code-sub",
   async setup(ctx) {
     const provider = (ctx as unknown as { provider: ProviderDomain }).provider
     const providerID = Provider.ID.make(PROVIDER_ID)
@@ -181,14 +190,37 @@ export default Plugin.define({
 
     // Mutable state the synchronous transform reads. It is refreshed before
     // every provider reload, so reads during a replay see current data.
-    const state: { apiKey?: string; catalog: readonly MuseModel[] } = { catalog: FALLBACK_CATALOG }
+    const state: { apiKey?: string; accessToken?: string; catalog: readonly MuseModel[] } = { catalog: FALLBACK_CATALOG }
+
+    // Subscription flow: the OAuth access token is used directly as the
+    // bearer (mintApiKey would fail or return a key without the builtin
+    // tool attestation). Catalog is fetched with the same bearer.
+    const refreshWithToken = async (accessToken: string): Promise<boolean> => {
+      const catalog = await fetchCatalog(accessToken)
+      const usable = catalog?.filter((model) => {
+        const meta = model.metadata?.["muse-code"]
+        return meta && !meta.is_hidden && meta.tool_call !== false && (meta.modalities?.output ?? ["text"]).includes("text")
+      })
+      if (!usable?.length) return false
+      state.apiKey = undefined
+      state.accessToken = accessToken
+      state.catalog = usable
+      return true
+    }
 
     const refresh = async (): Promise<boolean> => {
       const credential = await readCredential(optionKey)
-      const apiKey = credential?.api_key ?? (credential?.access_token && (await mintApiKey(credential.access_token)))
-      if (!apiKey) return false
+      const minted = credential?.api_key ?? (credential?.access_token && (await mintApiKey(credential.access_token)))
+      if (minted) {
+        state.apiKey = minted
+        state.accessToken = undefined
+      } else if (credential?.access_token) {
+        return refreshWithToken(credential.access_token)
+      } else {
+        return false
+      }
 
-      state.apiKey = apiKey
+      const apiKey = state.apiKey as string
       const catalog = await fetchCatalog(apiKey)
       const usable = catalog?.filter((model) => {
         const meta = model.metadata?.["muse-code"]
@@ -207,7 +239,13 @@ export default Plugin.define({
     }
 
     const registration = await provider.transform((editor) => {
-      const settings = state.apiKey ? { baseURL: API_BASE, apiKey: state.apiKey } : { baseURL: API_BASE }
+      // Token flow: the OAuth access token goes straight in as the bearer so
+      // the subscription attestation is preserved (no minted key).
+      const settings = state.apiKey
+        ? { baseURL: API_BASE, apiKey: state.apiKey }
+        : state.accessToken
+          ? { baseURL: API_BASE, apiKey: state.accessToken }
+          : { baseURL: API_BASE }
       const models = state.catalog.map((model) => toModelInfo(providerID, model))
 
       if (editor.get(PROVIDER_ID)) {
